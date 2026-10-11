@@ -1,0 +1,140 @@
+# A three-node PostgreSQL cluster built the way ISOGrid builds a managed
+# high-availability instance - Patroni, etcd, an HAProxy router and a PgBouncer
+# pooler with the same settings - plus the live demo.
+#
+#   docker compose up -d --build
+#   open http://localhost:8095          (production build)
+#   open http://localhost:5195          (front-end with hot reload)
+name: isogrid-pg-ha-demo
+
+# Every container finds the nodes in /etc/hosts. Docker Desktop's DNS, asked
+# for a container that is stopped, forwards the name upstream and hangs for
+# minutes - which would stall Patroni and the demo exactly when a node is down.
+# On Swarm a node's name stays resolvable while it is down, so this only
+# restores what the platform already behaves like.
+x-hosts: &hosts
+  extra_hosts:
+    - "pg1:10.77.0.11"
+    - "pg2:10.77.0.12"
+    - "pg3:10.77.0.13"
+    - "etcd:10.77.0.10"
+
+x-node: &node
+  # Built from ./patroni. Set PATRONI_IMAGE to use an image you already have.
+  image: ${PATRONI_IMAGE:-isogrid-pg-ha-demo/patroni:16}
+  build: ./patroni
+  # Not restarted by Docker: the demo decides when a broken node comes back,
+  # so the audience sees each step. On the platform, Swarm restarts it.
+  restart: "no"
+  # Patroni shuts down on SIGTERM and ignores the postgres image's SIGINT.
+  stop_signal: SIGTERM
+  depends_on: [etcd]
+  <<: *hosts
+
+x-node-env: &node-env
+  PATRONI_SCOPE: demo-ha
+  SAG_ETCD_HOSTS: etcd:2379
+  PATRONI_SUPERUSER_PASSWORD: demo-superuser
+  PATRONI_REPLICATION_PASSWORD: demo-replication
+  PGDATA: /var/lib/postgresql/data/pgdata
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.16
+    restart: unless-stopped
+    environment:
+      ETCD_NAME: etcd
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
+      ETCD_INITIAL_CLUSTER: etcd=http://etcd:2380
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: demo-ha
+    volumes: [etcd-data:/etcd-data]
+    command: ["etcd", "--data-dir=/etcd-data"]
+    networks: { default: { ipv4_address: 10.77.0.10 } }
+
+  pg1:
+    <<: *node
+    hostname: pg1
+    environment: { <<: *node-env, PATRONI_NAME: pg1, PATRONI_HOST: pg1 }
+    volumes: [pg1-data:/var/lib/postgresql/data]
+    networks: { default: { ipv4_address: 10.77.0.11 } }
+  pg2:
+    <<: *node
+    hostname: pg2
+    environment: { <<: *node-env, PATRONI_NAME: pg2, PATRONI_HOST: pg2 }
+    volumes: [pg2-data:/var/lib/postgresql/data]
+    networks: { default: { ipv4_address: 10.77.0.12 } }
+  pg3:
+    <<: *node
+    hostname: pg3
+    environment: { <<: *node-env, PATRONI_NAME: pg3, PATRONI_HOST: pg3 }
+    volumes: [pg3-data:/var/lib/postgresql/data]
+    networks: { default: { ipv4_address: 10.77.0.13 } }
+
+  router:
+    image: haproxy:alpine
+    restart: unless-stopped
+    depends_on: [pg1, pg2, pg3]
+    volumes: [./cluster/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro]
+    <<: *hosts
+
+  pooler:
+    image: edoburu/pgbouncer:v1.23.1-p2
+    restart: unless-stopped
+    depends_on: [router]
+    volumes:
+      - ./cluster/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./cluster/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+
+  # The demo itself, built for showing: API and page in one image.
+  demo:
+    build: .
+    <<: *hosts
+    restart: unless-stopped
+    depends_on: [pooler]
+    environment: &demo-env
+      COMPOSE_PROJECT: isogrid-pg-ha-demo
+      CONTROL_TOKEN: ${CONTROL_TOKEN:-}
+      WRITES_PER_SECOND: ${WRITES_PER_SECOND:-5}
+      READS_PER_SECOND: ${READS_PER_SECOND:-8}
+      AUTO_RECOVER_SECONDS: ${AUTO_RECOVER_SECONDS:-180}
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    ports: ["${DEMO_PORT:-8095}:8000"]
+
+  # Development: the same API with reload, and the page with hot reload.
+  # Started with `docker compose --profile dev up -d`.
+  demo-api:
+    profiles: [dev]
+    <<: *hosts
+    build: ./backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on: [pooler]
+    environment: *demo-env
+    volumes:
+      - ./backend/app:/srv/app
+      - /var/run/docker.sock:/var/run/docker.sock
+  demo-web:
+    profiles: [dev]
+    build: { context: ./frontend, target: development }
+    environment: { API_TARGET: "http://demo-api:8000" }
+    ports: ["${DEMO_DEV_PORT:-5195}:5173"]
+    volumes:
+      - ./frontend:/srv/app
+      - demo-web-node-modules:/srv/app/node_modules
+
+volumes:
+  etcd-data:
+  pg1-data:
+  pg2-data:
+  pg3-data:
+  demo-web-node-modules:
+
+networks:
+  default:
+    # A fixed range: the nodes have fixed addresses (see x-hosts), and some
+    # hosts have used up Docker's automatic pool anyway.
+    ipam:
+      config: [{ subnet: "10.77.0.0/24", ip_range: "10.77.0.128/25" }]
