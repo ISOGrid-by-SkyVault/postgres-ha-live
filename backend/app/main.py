@@ -83,6 +83,18 @@ async def reset(x_control_key: str | None = Header(default=None)) -> dict:
     return engine.snapshot()
 
 
+class Link(BaseModel):
+    rtt_ms: float
+
+
+@app.post("/api/link")
+async def link(body: Link, x_control_key: str | None = Header(default=None)) -> dict:
+    """Set the round-trip time between the nodes' data centers."""
+    _authorise(x_control_key)
+    await engine.set_link_rtt(body.rtt_ms)
+    return engine.snapshot()
+
+
 @app.get("/api/key")
 async def check_key(x_control_key: str | None = Header(default=None)) -> dict:
     return {"control": not config.CONTROL_TOKEN or x_control_key == config.CONTROL_TOKEN}

@@ -3,7 +3,7 @@ import type { DemoEvent, Mode, NodeView, Snapshot } from './types'
 import { DICTS, eventText, fill, numberFormat, phaseText, type Lang } from './i18n'
 import { NODE_COLORS, Topology } from './Topology'
 import { TrafficStrip } from './WriteStrip'
-import { READS } from './i18nReads'
+import { LINK, LINK_PRESETS_MS, READS } from './i18nReads'
 
 const params = new URLSearchParams(location.search)
 const KEY = params.get('key') ?? ''
@@ -95,7 +95,11 @@ export default function App() {
     [snap?.nodes],
   )
   const label = useCallback(
-    (name?: string | null) => snap?.nodes.find((n) => n.name === name)?.label ?? name ?? '—',
+    (name?: string | null) => {
+      // "pg1 (Chéraga)": the node, and the site it runs in.
+      const node = snap?.nodes.find((n) => n.name === name)
+      return node && node.label !== node.name ? `${node.name} (${node.label})` : (name ?? '—')
+    },
     [snap?.nodes],
   )
 
@@ -156,7 +160,6 @@ export default function App() {
     for (const [node, n] of Object.entries(s.nodes)) recentReads[node] = (recentReads[node] ?? 0) + n
   }
   const recentTotal = Object.values(recentReads).reduce((a, b) => a + b, 0)
-  const primary = snap.nodes.find((n) => n.status === 'primary')
   const elapsed = Math.max(0, Math.floor(snap.now - snap.started))
   const clock = `${String(Math.floor(elapsed / 3600)).padStart(2, '0')}:${String(Math.floor(elapsed / 60) % 60).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`
   const pauseNow = snap.writes.failing_since != null ? snap.now - snap.writes.failing_since : null
@@ -188,7 +191,7 @@ export default function App() {
       </header>
 
       <section className={`narrator tone-${tone}`} aria-live="polite">
-        <div className="narrator-icon">{iconOf(snap.phase.kind)}</div>
+        <span className="narrator-dot" aria-hidden="true" />
         <div>
           <h2>{headline}</h2>
           <p>{subline}</p>
@@ -213,6 +216,7 @@ export default function App() {
                 color={colorOf(n.name)}
                 fmt={fmt}
                 reads={snap.reads.by_node[n.name] ?? 0}
+                site={n.label !== n.name ? n.label : null}
                 modes={showControls ? snap.modes : []}
                 canRecover={canControl && !CLEAN}
                 busy={busy}
@@ -261,7 +265,7 @@ export default function App() {
                 const part = recentTotal ? (recentReads[n.name] ?? 0) / recentTotal : 0
                 return (
                   <div className="share-row" key={n.name}>
-                    <span style={{ color: colorOf(n.name) }}>{n.label}</span>
+                    <span style={{ color: colorOf(n.name) }}>{n.name}</span>
                     <div className="share-track">
                       <div className="share-fill" style={{ width: `${part * 100}%`, background: colorOf(n.name) }} />
                     </div>
@@ -270,20 +274,6 @@ export default function App() {
                 )
               })}
             </div>
-          </div>
-
-          <div className="primary-now card">
-            <span>{d.primaryNow}</span>
-            {primary ? (
-              <b style={{ color: colorOf(primary.name) }}>
-                ♛ {primary.label}
-                <small>
-                  {d.timeline} {primary.timeline ?? '—'}
-                </small>
-              </b>
-            ) : (
-              <b className="none">—</b>
-            )}
           </div>
 
           <div className="events card">
@@ -299,7 +289,11 @@ export default function App() {
                     <time dir="ltr">+{offset(e.t - snap.started)}</time>
                     <span className="dot" style={{ background: dotColor(e, colorOf) }} />
                     <span>
-                      {e.kind === 'reads_failing'
+                      {e.kind === 'link'
+                        ? e.rtt
+                          ? fill(LINK[lang].event, { rtt: fmt(e.rtt) })
+                          : LINK[lang].eventOff
+                        : e.kind === 'reads_failing'
                         ? r.failing
                         : e.kind === 'reads_resumed'
                           ? fill(r.resumed, { node: label(e.node), after: e.after != null ? fmt(e.after) : '—' })
@@ -309,22 +303,38 @@ export default function App() {
                 ))}
             </ol>
           </div>
+          {snap.link.available && (
+            <div className="link card">
+              <h3>{LINK[lang].title}</h3>
+              <div className="link-presets" role="group">
+                {LINK_PRESETS_MS.map((ms, i) => (
+                  <button
+                    key={ms}
+                    className={snap.link.rtt_ms === ms ? 'on' : ''}
+                    disabled={!canControl || CLEAN}
+                    onClick={() => act('link', '/api/link', { rtt_ms: ms })}
+                  >
+                    {LINK[lang].presets[i]}
+                    <b dir="ltr">{ms} ms</b>
+                  </button>
+                ))}
+              </div>
+              <small>{LINK[lang].hint}</small>
+            </div>
+          )}
           <div className="toolbar">
             {!CLEAN && canControl && (
               <>
                 <button onClick={() => act('verify', '/api/verify')} disabled={busy === 'verify'}>
-                  ✓ {d.verify}
+                  {d.verify}
                 </button>
                 <button className="ghost" onClick={() => act('reset', '/api/reset')}>
-                  ↺ {d.reset}
+                  {d.reset}
                 </button>
               </>
             )}
             {!canControl && <span className="readonly">{d.readOnly}</span>}
             {error && <span className="error">{error}</span>}
-            {snap.auto_recover > 0 && !CLEAN && (
-              <span className="note">{fill(d.autoRecover, { n: fmt(snap.auto_recover) })}</span>
-            )}
           </div>
         </aside>
       </main>
@@ -336,7 +346,7 @@ export default function App() {
             {snap.nodes.map((n) => (
               <span key={n.name}>
                 <i style={{ background: colorOf(n.name) }} />
-                {n.label}
+                {n.name}
               </span>
             ))}
             <span>
@@ -364,6 +374,7 @@ function NodeCard(props: {
   color: string
   fmt: (n: number) => string
   reads: number
+  site: string | null
   modes: Mode[]
   canRecover: boolean
   busy: string | null
@@ -371,16 +382,20 @@ function NodeCard(props: {
   onRecover: () => void
   isLastStanding: boolean
 }) {
-  const { node, lang, color, fmt, reads, modes, canRecover, busy, onFail, onRecover, isLastStanding } = props
+  const { node, lang, color, fmt, reads, site, modes, canRecover, busy, onFail, onRecover, isLastStanding } = props
   const d = DICTS[lang]
   const dead = node.status === 'down' || node.status === 'isolated'
   const hint = dead && node.chaos ? d.modeDown[node.chaos] : d.roleHint[node.status]
   return (
     <div className={`node-card status-${node.status}`} style={{ ['--node' as string]: color }}>
       <div className="card-head">
+        <div className="node-title">
+          <b>{node.name}</b>
+          {site && <span>{site}</span>}
+        </div>
         <div className="chip">{d.status[node.status]}</div>
-        <div className="hint">{hint}</div>
       </div>
+      <div className="hint">{hint}</div>
       <dl className="three">
         <div>
           <dt>{d.latestWrite}</dt>
@@ -412,7 +427,8 @@ function NodeCard(props: {
         {node.chaos
           ? canRecover && (
               <button className="recover" onClick={onRecover} disabled={busy === `rec-${node.name}`}>
-                ⟳ {d.bringBack}
+                <Icon name="restart" />
+                {d.bringBack}
               </button>
             )
           : modes.map((m) => (
@@ -423,7 +439,8 @@ function NodeCard(props: {
                 onClick={() => onFail(m)}
                 disabled={isLastStanding || busy === `fail-${node.name}`}
               >
-                {m === 'crash' ? '⚡' : m === 'stop' ? '⏻' : '✂'} {d.actions[m]}
+                <Icon name={m} />
+                {d.actions[m]}
               </button>
             ))}
       </div>
@@ -437,7 +454,7 @@ function Stat(props: { label: string; hint: string; value: string; tone: string;
       <span className="stat-label">{props.label}</span>
       <b dir="ltr">
         {props.value}
-        {props.check && <em>✓</em>}
+        {props.check && <Icon name="check" />}
       </b>
       <small>{props.hint}</small>
     </div>
@@ -456,19 +473,20 @@ function toneOf(kind: string) {
   return 'warn'
 }
 
-function iconOf(kind: string) {
+/** Line icons, drawn rather than typed: an emoji renders differently on every system. */
+function Icon({ name }: { name: Mode | 'restart' | 'check' }) {
+  const paths: Record<string, string> = {
+    crash: 'M13 2 L5 13 H11 L10 22 L19 10 H13 Z',
+    stop: 'M12 3 V12 M6.5 6.5 A8 8 0 1 0 17.5 6.5',
+    isolate: 'M3 12 H9 M15 12 H21 M10 7 L14 17',
+    restart: 'M20 12 A8 8 0 1 1 17.5 6.2 M20 3 V7.5 H15.5',
+    check: 'M5 12.5 L10 17.5 L19 7',
+  }
   return (
-    {
-      healthy: '✓',
-      recovered: '✓',
-      waiting_lock: '⏳',
-      electing: '🗳',
-      switching: '⇄',
-      degraded: '⚠',
-      rejoining: '⟳',
-      starting: '…',
-    } as Record<string, string>
-  )[kind]
+    <svg className="icon" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <path d={paths[name]} />
+    </svg>
+  )
 }
 
 function dotColor(e: DemoEvent, colorOf: (n?: string | null) => string) {

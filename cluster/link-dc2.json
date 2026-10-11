@@ -1,0 +1,4 @@
+[
+  { "name": "postgres", "listen": "0.0.0.0:5432", "upstream": "pg2:5432", "enabled": true },
+  { "name": "patroni", "listen": "0.0.0.0:8008", "upstream": "pg2:8008", "enabled": true }
+]

@@ -68,3 +68,42 @@ export const READS: Record<
     resumed: 'استؤنفت القراءات على {node} بعد {after} ث.',
   },
 }
+
+/** Wording for the network between the nodes' data centers. */
+export const LINK: Record<
+  Lang,
+  { title: string; hint: string; dc: string; km: string; presets: [string, string, string, string]; wal: string; event: string; eventOff: string }
+> = {
+  en: {
+    title: 'Simulated network between the sites',
+    km: '≈ {km} km',
+    hint: 'round trip added between two nodes; replication really waits for it',
+    dc: 'Data center {n}',
+    presets: ['No delay', 'Metro fibre', 'Congested', 'Degraded'],
+    wal: '{rtt} ms round trip',
+    event: 'Simulated link between sites set to {rtt} ms round trip.',
+    eventOff: 'Simulated delay between sites removed.',
+  },
+  fr: {
+    title: 'Réseau simulé entre les sites',
+    km: '≈ {km} km',
+    hint: 'aller-retour ajouté entre deux nœuds ; la réplication l’attend réellement',
+    dc: 'Centre de données {n}',
+    presets: ['Sans délai', 'Fibre métro', 'Saturé', 'Dégradé'],
+    wal: '{rtt} ms aller-retour',
+    event: 'Lien simulé entre les sites réglé à {rtt} ms aller-retour.',
+    eventOff: 'Délai simulé entre les sites supprimé.',
+  },
+  ar: {
+    title: 'شبكة محاكاة بين المواقع',
+    km: '≈ {km} كم',
+    hint: 'زمن الذهاب والإياب المضاف بين عقدتين؛ النسخ ينتظره فعلًا',
+    dc: 'مركز البيانات {n}',
+    presets: ['بلا تأخير', 'ألياف حضرية', 'مزدحمة', 'متدهورة'],
+    wal: '{rtt} م.ث ذهابًا وإيابًا',
+    event: 'ضُبط الرابط المحاكى بين المواقع على {rtt} م.ث ذهابًا وإيابًا.',
+    eventOff: 'أزيل التأخير المحاكى بين المواقع.',
+  },
+}
+
+export const LINK_PRESETS_MS = [0, 2, 40, 200]

@@ -18,6 +18,14 @@ x-hosts: &hosts
     - "pg2:10.77.0.12"
     - "pg3:10.77.0.13"
     - "etcd:10.77.0.10"
+    - "dc1:10.77.0.21"
+    - "dc2:10.77.0.22"
+    - "dc3:10.77.0.23"
+
+x-link: &link
+  image: ghcr.io/shopify/toxiproxy:2.9.0
+  restart: unless-stopped
+  volumes: [./cluster:/config:ro]
 
 x-node: &node
   # Built from ./patroni. Set PATRONI_IMAGE to use an image you already have.
@@ -58,21 +66,41 @@ services:
   pg1:
     <<: *node
     hostname: pg1
-    environment: { <<: *node-env, PATRONI_NAME: pg1, PATRONI_HOST: pg1 }
+    environment: { <<: *node-env, PATRONI_NAME: pg1, PATRONI_HOST: dc1 }
     volumes: [pg1-data:/var/lib/postgresql/data]
     networks: { default: { ipv4_address: 10.77.0.11 } }
   pg2:
     <<: *node
     hostname: pg2
-    environment: { <<: *node-env, PATRONI_NAME: pg2, PATRONI_HOST: pg2 }
+    environment: { <<: *node-env, PATRONI_NAME: pg2, PATRONI_HOST: dc2 }
     volumes: [pg2-data:/var/lib/postgresql/data]
     networks: { default: { ipv4_address: 10.77.0.12 } }
   pg3:
     <<: *node
     hostname: pg3
-    environment: { <<: *node-env, PATRONI_NAME: pg3, PATRONI_HOST: pg3 }
+    environment: { <<: *node-env, PATRONI_NAME: pg3, PATRONI_HOST: dc3 }
     volumes: [pg3-data:/var/lib/postgresql/data]
     networks: { default: { ipv4_address: 10.77.0.13 } }
+
+  # The links between data centers. Each node advertises itself to the others
+  # as dcN, so replication and Patroni's node-to-node calls cross a link that
+  # adds real latency (set from the page). The router still reaches the nodes
+  # directly, with an unchanged configuration.
+  #
+  # A TCP proxy rather than kernel traffic shaping (tc netem): Docker Desktop's
+  # WSL2 kernel is built without it.
+  dc1:
+    <<: [*link, *hosts]
+    command: ["-host=0.0.0.0", "-config=/config/link-dc1.json"]
+    networks: { default: { ipv4_address: 10.77.0.21 } }
+  dc2:
+    <<: [*link, *hosts]
+    command: ["-host=0.0.0.0", "-config=/config/link-dc2.json"]
+    networks: { default: { ipv4_address: 10.77.0.22 } }
+  dc3:
+    <<: [*link, *hosts]
+    command: ["-host=0.0.0.0", "-config=/config/link-dc3.json"]
+    networks: { default: { ipv4_address: 10.77.0.23 } }
 
   router:
     image: haproxy:alpine
@@ -100,6 +128,7 @@ services:
       CONTROL_TOKEN: ${CONTROL_TOKEN:-}
       WRITES_PER_SECOND: ${WRITES_PER_SECOND:-5}
       READS_PER_SECOND: ${READS_PER_SECOND:-8}
+      LINK_RTT_MS: ${LINK_RTT_MS:-2}
       AUTO_RECOVER_SECONDS: ${AUTO_RECOVER_SECONDS:-180}
     volumes: [/var/run/docker.sock:/var/run/docker.sock]
     ports: ["${DEMO_PORT:-8095}:8000"]

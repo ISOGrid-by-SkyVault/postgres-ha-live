@@ -26,6 +26,7 @@ import httpx
 
 from . import config
 from .chaos import ChaosError, DockerChaos
+from .links import Links
 
 log = logging.getLogger("demo")
 
@@ -73,6 +74,7 @@ class Second:
 class Engine:
     def __init__(self) -> None:
         self.chaos = DockerChaos()
+        self.links = Links()
         self.nodes: dict[str, Node] = {
             name: Node(name=name, label=config.LABELS[i] if i < len(config.LABELS) else name)
             for i, name in enumerate(config.NODES)
@@ -116,7 +118,7 @@ class Engine:
         self.started = time.time()
 
     async def start(self) -> None:
-        loops = [self._bootstrap(), self._writer(), self._reader(), self._lock_loop(), self._resolve_loop(), self._watch_loop()]
+        loops = [self._bootstrap(), self._writer(), self._reader(), self._links_loop(), self._lock_loop(), self._resolve_loop(), self._watch_loop()]
         for node in self.nodes.values():
             loops += [self._patroni_loop(node), self._rows_loop(node)]
         self.tasks = [asyncio.create_task(loop) for loop in loops]
@@ -126,6 +128,7 @@ class Engine:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         await self.http.aclose()
+        await self.links.close()
 
     def emit(self, kind: str, **data: Any) -> None:
         self._event_id += 1
@@ -402,6 +405,16 @@ class Engine:
             self.emit("promoted", node=holder, previous=previous)
             self._incident()
 
+    async def _links_loop(self) -> None:
+        while True:
+            await self.links.ensure()
+            await asyncio.sleep(4)
+
+    async def set_link_rtt(self, rtt_ms: float) -> None:
+        self.links.rtt_ms = max(0.0, min(float(rtt_ms), 2000.0))
+        await self.links.ensure()
+        self.emit("link", rtt=self.links.rtt_ms)
+
     async def _resolve_loop(self) -> None:
         """Map node addresses to names, to tell which node served each write."""
         loop = asyncio.get_running_loop()
@@ -655,6 +668,7 @@ class Engine:
                 "last_outage": round(self.last_outage, 1) if self.last_outage else None,
                 "series": [{"t": s.t, "nodes": s.nodes, "failed": s.failed} for s in self.seconds],
             },
+            "link": self.links.snapshot(),
             "reads_per_second": config.READS_PER_SECOND,
             "reads": {
                 "ok": self.reads_ok,

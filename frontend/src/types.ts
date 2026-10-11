@@ -46,6 +46,7 @@ export interface DemoEvent {
   previous?: string
   mode?: Mode
   after?: number
+  rtt?: number
   outage?: number | null
   acked?: number
   missing?: number
@@ -75,6 +76,7 @@ export interface Snapshot {
   auto_recover: number
   writes_per_second: number
   reads_per_second: number
+  link: { available: boolean; rtt_ms: number; applied: boolean; distances_km: Record<string, number> }
   reads: {
     ok: number
     failed: number

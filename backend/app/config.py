@@ -18,8 +18,10 @@ def _list(name: str, default: str) -> list[str]:
 #: http://<name>:8008 and its PostgreSQL at <name>:5432.
 NODES: list[str] = _list("NODES", "pg1,pg2,pg3")
 
-#: Short labels shown on screen. Defaults to the node names.
-LABELS: list[str] = _list("NODE_LABELS", ",".join(NODES))
+#: The site each node is shown in. The defaults are three districts of Algiers,
+#: chosen to illustrate a metropolitan deployment: they are simulated sites,
+#: not a statement of where anything is hosted.
+LABELS: list[str] = _list("NODE_LABELS", "Chéraga,Bab Ezzouar,Rouiba")
 
 PATRONI_PORT = int(os.environ.get("PATRONI_PORT", "8008"))
 PATRONI_SCOPE = os.environ.get("PATRONI_SCOPE", "demo-ha")
@@ -67,3 +69,21 @@ STATIC_DIR = os.environ.get("STATIC_DIR", "")
 #: connections across the standbys (HAProxy `listen replicas`, round robin).
 READER_DSN = os.environ.get("READER_DSN", "postgresql://demo:demo-password@router:5433/demo")
 READS_PER_SECOND = float(os.environ.get("READS_PER_SECOND", "8"))
+
+#: The links between data centers: one latency proxy per node, in node order
+#: (see docker-compose.yml). Empty when the nodes talk to each other directly.
+LINKS: list[str] = _list("LINKS", "dc1,dc2,dc3")
+LINK_API_PORT = int(os.environ.get("LINK_API_PORT", "8474"))
+
+#: Round-trip time added between two nodes, in milliseconds. Three data
+#: centers in one city are a few milliseconds apart; the page can raise it.
+LINK_RTT_MS = float(os.environ.get("LINK_RTT_MS", "2"))
+
+#: Straight-line distance between the sites, in kilometres, shown on the links.
+#: Fibre adds about 1 ms of round trip per 100 km, so across one city the delay
+#: is dominated by equipment, not distance.
+LINK_DISTANCES_KM: dict[str, float] = {
+    pair.split("=")[0].replace("-", "|"): float(pair.split("=")[1])
+    for pair in _list("LINK_DISTANCES_KM", "pg1-pg2=20,pg2-pg3=9,pg1-pg3=29")
+    if "=" in pair
+}

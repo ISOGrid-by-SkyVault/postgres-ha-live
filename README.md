@@ -2,7 +2,7 @@
 
 An [ISOGrid](https://isogrid.skyvault.pro) example: a three-node PostgreSQL cluster you can break from your browser, and watch heal itself.
 
-The page shows three databases, one primary and two standbys. An application writes and reads continuously. You cut the power to a node, shut it down, or unplug it from the network. Then you watch:
+The page shows three databases, one primary and two standbys. An application writes and reads continuously. You cut the power to a node, shut it down, or unplug it from the network. The nodes sit in three named sites, with an adjustable network delay between them. Then you watch:
 
 1. Writes pause while the cluster decides who leads.
 2. A standby is promoted, and writes move to it.
@@ -37,6 +37,7 @@ flowchart TB
 | `etcd` | Holds the leader lock | `quay.io/coreos/etcd:v3.5.16` |
 | `router` | HAProxy. Port 5432 follows the leader, port 5433 balances the standbys | `haproxy:alpine` |
 | `pooler` | PgBouncer in front of the router, transaction pooling | `edoburu/pgbouncer:v1.23.1-p2` |
+| `dc1`, `dc2`, `dc3` | The links between sites, which add the simulated delay | `ghcr.io/shopify/toxiproxy:2.9.0` |
 | `demo` | The application: API and page in one image | `Dockerfile` |
 
 The cluster uses the same building blocks and settings as a managed high-availability PostgreSQL instance on ISOGrid.
@@ -75,6 +76,25 @@ The application reads through the router's read port. HAProxy hands each connect
 
 During a failover the reads do not stop. When a standby is promoted, the other one serves every read until the broken node rejoins.
 
+## Sites and the simulated network
+
+Each node is shown in its own site: `pg1` in Chéraga, `pg2` in Bab Ezzouar and `pg3` in Rouiba, three districts of Algiers between 9 and 29 km apart. The page shows the distance and the delay on each replication link.
+
+The delay is real. Every node advertises itself to the others through its own link (`dc1`, `dc2`, `dc3`), a TCP proxy that holds each packet for the chosen time in both directions. Replication and Patroni's node-to-node calls wait for it. The router still reaches the nodes directly.
+
+| Preset | Round trip added | What it stands for |
+| --- | --- | --- |
+| No delay | 0 ms | All nodes in one room |
+| Metro fibre | 2 ms | Sites across one city. The default. |
+| Congested | 40 ms | A saturated or long-distance link |
+| Degraded | 200 ms | A failing link. Standbys visibly fall behind. |
+
+Fibre adds about 1 ms of round trip per 100 km, so across one city the delay comes from equipment, not distance. Two milliseconds is a generous figure for these sites.
+
+**The sites are an illustration.** They show how a metropolitan deployment behaves. They are not a statement of where any ISOGrid system is hosted.
+
+The link is a proxy and not kernel traffic shaping, because Docker Desktop's WSL2 kernel is built without `tc netem`.
+
 ## Keys and URL parameters
 
 | Key | Action |
@@ -96,6 +116,9 @@ During a failover the reads do not stop. When a standby is promoted, the other o
 | `DEMO_PORT` | 8095 | Port of the demo |
 | `WRITES_PER_SECOND` | 5 | Write rate |
 | `READS_PER_SECOND` | 8 | Read rate. 0 turns reads off. |
+| `LINK_RTT_MS` | 2 | Round trip added between two nodes at start |
+| `NODE_LABELS` | Chéraga,Bab Ezzouar,Rouiba | The site shown for each node |
+| `LINK_DISTANCES_KM` | pg1-pg2=20,pg2-pg3=9,pg1-pg3=29 | Distances shown on the links |
 | `AUTO_RECOVER_SECONDS` | 180 | Bring a node back on its own after this long. 0 turns it off. |
 | `CONTROL_TOKEN` | empty | Require `?key=` to break nodes |
 | `PATRONI_IMAGE` | built from `patroni/` | Use a Patroni image you already have |
